@@ -1,0 +1,29 @@
+<svg width="200" height="50" viewBox="0 0 200 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoGradient" x1="0" y1="0" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6">
+        <animate attributeName="stop-color" values="#3B82F6; #10B981; #EF4444; #3B82F6" dur="10s" repeatCount="indefinite" />
+      </stop>
+      <stop offset="100%" style="stop-color:#10B981">
+        <animate attributeName="stop-color" values="#10B981; #EF4444; #3B82F6; #10B981" dur="10s" repeatCount="indefinite" />
+      </stop>
+    </linearGradient>
+  </defs>
+  
+  <!-- Animated wave line -->
+  <path d="M10,25 Q25,10 40,25 T70,25 T100,25" stroke="url(#logoGradient)" stroke-width="3" fill="none">
+    <animate attributeName="d" 
+      values="M10,25 Q25,10 40,25 T70,25 T100,25;
+              M10,25 Q25,40 40,25 T70,25 T100,25;
+              M10,25 Q25,10 40,25 T70,25 T100,25" 
+      dur="4s" 
+      repeatCount="indefinite" />
+  </path>
+  
+  <!-- Orange dot -->
+  <circle cx="95" cy="25" r="4" fill="#F97316" />
+  
+  <!-- Text -->
+  <text x="110" y="30" font-family="Arial" font-size="24" font-weight="bold" fill="url(#logoGradient)">AromaID</text>
+  <text x="110" y="45" font-family="Arial" font-size="12" fill="#666">Smart Scent Analysis</text>
+</svg>
