@@ -5,16 +5,16 @@ import os
 from tensorflow.keras.models import load_model
 
 
-
+server = r'NAYADLENOVO-1\SQLEXPRESS'  # שימי לב ל-r לפני המחרוזת כדי לא לברוח מה-backslash
+database = 'data_base_AromaID'  # שם מסד הנתונים שלך
 
 # פונקציה לפתיחת חיבור למסד נתונים PostgreSQL
 def connect_db():
     conn = pyodbc.connect(
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=SHDC;"
-        "DATABASE=data_AromaId;"
-        "UID=sa;"
-        "PWD=102030;"
+    f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+    f'SERVER={server};'
+    f'DATABASE={database};'
+    f'Trusted_Connection=yes;'
     )
     return conn
 
@@ -117,19 +117,19 @@ def insert_data_example(data_dict):
 
 
 # שמירת המודל המאומן בטבלת SQL
-def save_model(user_id, filtered_id, model_path, training_date, metadata):
+def save_model_and_scaler(user_id, filtered_id, model_path, training_date, metadata, scaler_path):
     try:
         conn = connect_db()
         cursor = conn.cursor()
 
         insert_query = """
-            INSERT INTO Models (user_id, filtered_id, model_path, training_date, metadata)
+            INSERT INTO Models (user_id, filtered_id, model_path, training_date, metadata, scaler_path)
             OUTPUT INSERTED.model_id
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
         """
 
         cursor.execute(insert_query, (
-            user_id, filtered_id, model_path, training_date, json.dumps(metadata)
+            user_id, filtered_id, model_path, training_date, json.dumps(metadata), scaler_path
         ))
 
         new_model_id = cursor.fetchone()[0]
@@ -139,6 +139,8 @@ def save_model(user_id, filtered_id, model_path, training_date, metadata):
 
     except Exception as e:
         print(f"שגיאה בהוספת הרשומה: {e}")
+        if conn:
+            conn.rollback()
         return None
 
     finally:
@@ -201,6 +203,43 @@ def load_model_by_user_id(user_id):
 #
 #     model_id = save_model_record(user_id, filtered_id, model_path, metadata)  # שמירת המידע במסד נתונים (כנראה)
 #     return jsonify({"model_id": model_id, "message": "Model record saved successfully"})
+
+
+def save_kalman_paths_to_db(user_id, filtered_id, kalman_models_dict, model_file_path):
+    """
+    שומר רשומות של מודלי קלמן עבור כל חיישן בטבלת KalmanStates.
+
+    :param connection: אובייקט חיבור למסד (מחובר כבר)
+    :param user_id: מזהה המשתמש (int)
+    :param filtered_id: מזהה הקובץ המסונן (int)
+    :param kalman_models_dict: מילון עם שם חיישן כ־key (לא חייב את האובייקט עצמו)
+    :param model_file_path: נתיב הקובץ הפיזי שבו שמורים המודלים (str)
+    """
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+        print("8888")
+        for sensor_name in kalman_models_dict.keys():
+            cursor.execute("""
+                INSERT INTO KalmanStates (user_id, filtered_id, sensor_name, kalman_state_path)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, filtered_id, sensor_name, model_file_path))
+        print("0000")
+        conn.commit()
+        print("99999")
+        print("✔ נתיבי מודלים נשמרו בהצלחה לטבלת KalmanStates.")
+        return True
+
+    except Exception as e:
+        connection.rollback()
+        print("❌ שגיאה בשמירה לטבלה KalmanStates:", str(e))
+        return False
+
+    finally:
+        conn.close()
+
 
 def query_test():
     try:
@@ -417,7 +456,7 @@ def get_original_file_paths(user_id):
         conn.close()
 
 # זוהי פונקציה ששולף את הניתוב למודל המאומן
-def load_model_path_by_user(user_id: int):
+def load_model_and_scaler_path_by_user(user_id: int):
     """
     טוענת את נתיב המודל האחרון שנשמר עבור משתמש לפי user_id.
 
@@ -429,7 +468,7 @@ def load_model_path_by_user(user_id: int):
         cursor = conn.cursor()
 
         query = """
-            SELECT TOP 1 model_path, filtered_id
+            SELECT TOP 1 model_path, filtered_id, scaler_path
             FROM Models
             WHERE user_id = ?
             ORDER BY training_date DESC
@@ -439,8 +478,8 @@ def load_model_path_by_user(user_id: int):
         row = cursor.fetchone()
 
         if row:
-            model_path, filtered_id = row[0], row[1]
-            return filtered_id, model_path
+            model_path, filtered_id, scaler_path = row[0], row[1], row[2]
+            return model_path, filtered_id, scaler_path
         else:
             print("לא נמצא מודל עבור המשתמש.")
             return None
@@ -470,8 +509,51 @@ def load_trained_model(model_path: str):
         print(f"שגיאה בטעינת המודל: {e}")
         return None
 
+# טוען את הנתיב למודל קלמן 
+def load_kalman_model_path(user_id, filtered_id):
+    """
+    שולף את נתיב קובץ מודלי קלמן ששמור בטבלת KalmanStates לפי user_id ו־filtered_id.
 
-import json
+    :param user_id: מזהה המשתמש
+    :param filtered_id: מזהה הקובץ המסונן
+    :return: נתיב הקובץ כ־string או None אם לא נמצא
+    """
+    try:
+        conn = connect_db()
+        cursor = conn.cursor()
+
+        query = """
+            SELECT TOP 1 kalman_state_path
+            FROM KalmanStates
+            WHERE user_id = ? AND filtered_id = ?
+        """
+
+        cursor.execute(query, (user_id, filtered_id))
+        row = cursor.fetchone()
+
+        if row:
+            return row[0]
+        else:
+            print("⚠️ לא נמצא נתיב מודל קלמן במסד הנתונים.")
+            return None
+
+    except Exception as e:
+        print(f"שגיאה בשליפת נתיב מודל קלמן: {e}")
+        return None
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+            
+            
+# טוען את קלמן מודל
+def load_kalman_models(model_path):
+    with open(model_path, 'rb') as f:
+        kalman_models = pickle.load(f)
+    return kalman_models
+
 
 
 # טוען את פרמטרי הסינון (filter_params) עבור קובץ מסונן מסוים.

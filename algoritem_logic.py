@@ -2,13 +2,13 @@ import numpy as np
 from scipy.optimize import minimize
 import matplotlib
 
-from פרויקט.befor_filter_klaman import estimate_q_r_from_excel
+from befor_filter_klaman import estimate_q_r_from_excel
 
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import pandas as pd  # נוודא שהמודול pandas מיובא. זוהי ספריה מעולה לעבודה עם נתונים ובמיוחד עם טבלאות(exel,cvs)
-from פרויקט.classFilter_Kalman import KalmanFilter
-from פרויקט.linear_regression import linear
+from classFilter_Kalman import KalmanFilter
+from linear_regression import linear
 
 
 

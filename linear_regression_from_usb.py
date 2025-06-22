@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt # ליבוא matplotlib.pyplot עבור יציר
 import seaborn as sns# ליבוא seaborn עבור גרפים סטטיסטיים יפים
 import matplotlib # שוב, ליבוא matplotlib
 
-from פרויקט.linear_regression import predict_single_row
+from linear_regression import predict_single_row
 
 matplotlib.use('Agg')  # או 'TkAgg', אם אתה משתמש ב-GUI, קביעת backend להצגת גרפים
 import plotly.express as px  # ליבוא plotly.express ליצירת גרפים אינטרקטיביים
@@ -121,7 +121,8 @@ def liner(file):
     print('\033[1m' + 'Classification Report' + '\033[0m', '\n',
           classification_report(y_test, predictions))  # הצגת דוח ביצועים
     print('\033[1m' + 'Confusion Matrix' + '\033[0m', '\n', confusion_matrix(y_test, predictions))  # הצגת מטריצת בלבול
-    return model
+    
+    return model, scaler
 
 
 if __name__ == '__main__':

@@ -3,9 +3,10 @@ import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv) # ליב�
 import matplotlib.pyplot as plt # ליבוא matplotlib.pyplot עבור יצירת גרפים
 import seaborn as sns# ליבוא seaborn עבור גרפים סטטיסטיים יפים
 import matplotlib # שוב, ליבוא matplotlib
+from tensorflow.keras.models import load_model
 
 #from פרויקט.data_sql import save_model
-from פרויקט.filter_kalman import apply_kalman_to_row
+from filter_kalman import apply_kalman_to_row
 
 matplotlib.use('Agg')  # או 'TkAgg', אם אתה משתמש ב-GUI, קביעת backend להצגת גרפים
 import plotly.express as px  # ליבוא plotly.express ליצירת גרפים אינטרקטיביים
@@ -152,45 +153,49 @@ def linear(file_exel_after_kalman_filter):
 
     # >>> הוסיפי מפה והלאה <<<
 
-def predict_single_row(input_row, feature_names, scaler, model):
-        """
-        input_row: dict או list של ערכים לפי סדר העמודות
-        feature_names: שמות הפיצ'רים
-        scaler: האובייקט של StandardScaler שאומן קודם
-        model: המודל המאומן (Keras)
-        """
+# def predict_single_row(input_row, feature_names, scaler, model):
+#         """
+#         input_row: dict או list של ערכים לפי סדר העמודות
+#         feature_names: שמות הפיצ'רים
+#         scaler: האובייקט של StandardScaler שאומן קודם
+#         model: המודל המאומן (Keras)
+#         """
+#
+#         if isinstance(input_row, dict):
+#             row_df = pd.DataFrame([input_row])[feature_names]
+#         elif isinstance(input_row, list) or isinstance(input_row, np.ndarray):
+#             row_df = pd.DataFrame([input_row], columns=feature_names)
+#         else:
+#             raise ValueError("Input must be a dict or list/array")
+#
+#         # סטנדרטיזציה
+#         row_scaled = scaler.transform(row_df)
+#
+#         # תחזית
+#         prediction = model.predict(row_scaled)[0][0]
+#
+#         # תוצאה בינארית
+#         result = int(prediction > 0.5)
+#         print(f"\n❯ סיכוי לסוכרת: {prediction:.2%} → {'חולה' if result == 1 else 'בריא'}")
+#         return result, prediction
+#
 
-        if isinstance(input_row, dict):
-            row_df = pd.DataFrame([input_row])[feature_names]
-        elif isinstance(input_row, list) or isinstance(input_row, np.ndarray):
-            row_df = pd.DataFrame([input_row], columns=feature_names)
-        else:
-            raise ValueError("Input must be a dict or list/array")
 
-        # סטנדרטיזציה
-        row_scaled = scaler.transform(row_df)
+# מבחינת פילטר קלמן1 -
+def predict_single_row(sensor_values, kalman_model, sensors, model):
 
-        # תחזית
-        prediction = model.predict(row_scaled)[0][0]
-
-        # תוצאה בינארית
-        result = int(prediction > 0.5)
-        print(f"\n❯ סיכוי לסוכרת: {prediction:.2%} → {'חולה' if result == 1 else 'בריא'}")
-        return result, prediction
-
-
-def predict_single_row(input_row, feature_names, QR, model):
-    print(input_row)
+    print(sensor_values)
     print('11')
+    print(type(model))
+
     # המרה ל-DataFrame עם העמודות בסדר הנכון, בהתאם לסוג הקלט
-    if isinstance(input_row, dict):
+    if isinstance(sensor_values, dict):
         print('12')
         # במקרה שמקבלים dict, יוצרים DataFrame וממיינים לפי feature_names
-        row_df = pd.DataFrame([input_row])[feature_names]
-        print('13')
-    elif isinstance(input_row, list) or isinstance(input_row, np.ndarray):
+        row_df = pd.DataFrame([sensor_values])[sensors]
+    elif isinstance(sensor_values, list) or isinstance(sensor_values, np.ndarray):
         # במקרה של list או numpy array, יוצרים DataFrame עם כותרות מהfeature_names
-        row_df = pd.DataFrame([input_row], columns=feature_names)
+        row_df = pd.DataFrame([sensor_values], columns=sensors)
     else:
         print('14')
         # אם הקלט לא מוכר, מיידעים על שגיאה
@@ -201,7 +206,8 @@ def predict_single_row(input_row, feature_names, QR, model):
         raise ValueError("שורת הקלט מכילה ערכים חסרים (NaN)")
     # סטנדרטיזציה של השורה לפי המודל (scale לפי האימון)
     try:
-        row_scaled = apply_kalman_to_row(row_df,QR,feature_names)
+        row_scaled = apply_kalman_to_row(sensor_values, kalman_model, sensors)
+        print('77777')
         print(row_scaled)
     except Exception as e:
         print(f"שגיאה בסקיילר: {e}")
@@ -209,17 +215,166 @@ def predict_single_row(input_row, feature_names, QR, model):
     print('16')
     print(row_scaled)
     print(type(row_scaled))
-    row_scaled_df = pd.DataFrame([row_scaled], columns=feature_names)
+    row_scaled_df = pd.DataFrame([row_scaled], columns= sensors)
     # תחזית המודל, מחזיר מערך דו-ממדי, לוקחים את הערך הראשון
     prediction = model.predict(row_scaled_df)[0][0]
     print('17')
     # המרת הסיכוי לתוצאה בינארית לפי סף 0.5
     result = int(prediction > 0.5)
     print('18')
+    print(model)
     # החזרת התוצאה הבינארית והסיכוי הרציף
-    return result, prediction,row_scaled
+    return result, prediction, row_scaled
 
 
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+#עובד ללא scaler
+# def predict_single_sample(model, sample_data):
+#     """
+#     מבצעת חיזוי על דגימה בודדת באמצעות מודל מאומן.
+#
+#     Args:
+#         model: המודל המאומן (לדוגמה, מודל TensorFlow Keras שהוחזר מהפונקציה liner).
+#         sample_data: מערך חד-ממדי של נתונים עבור דגימה אחת. יש לוודא שהנתונים
+#                      במערך זה הם לפי סדר החיישנים ששימשו לאימון המודל.
+#
+#     Returns:
+#         tuple: זוג ערכים הכולל:
+#                - prediction (int): תוצאת החיזוי (0 או 1).
+#                - confidence (float): אחוז הביטחון של החיזוי.
+#     """
+#     # ודא שהקלט הוא מערך numpy
+#     sample_data = np.array(sample_data).reshape(1, -1)
+#
+#     # יש לבצע סקאלינג לנתונים באותו אופן שבו נתוני האימון עברו סקאלינג.
+#     # מכיוון שהסקיילר נוצר בתוך הפונקציה liner ואינו מוחזר, נצטרך
+#     # ליצור סקיילר חדש ולהתאים אותו מחדש על נתוני אימון כלשהם אם רוצים דיוק מוחלט.
+#     # לשם הפשטות בדוגמה זו, נניח שהסקיילר שומש רק לשינוי קנה מידה
+#     # ונוכל להשתמש באובייקט חדש שיעבור fit_transform על נתוני האימון
+#     # במידה וזה היה זמין. במקרה הנוכחי, נבצע סקאלינג עם scaler חדש,
+#     # אך חשוב לציין שבסביבת פרויקט אמיתית, יש לשמור ולטעון את ה-scaler
+#     # ששימש לאימון המודל.
+#
+#     # יצירת סקיילר חדש (לצורך הדגמה בלבד! ביישום אמיתי, השתמש בסקיילר המאומן)
+#     scaler_for_prediction = StandardScaler()
+#     # נניח ש-X_train הוגדר מראש או שנספק לו נתוני דמה
+#     # לצורך הדגמה, ניצור נתוני דמה של X_train
+#     # במידה ואת המודל שקיבלנו, קיבלנו מחוץ לסקופ של הפונקציה הזאת
+#     # כלומר, המודל אומן כבר על ידי הפונקציה liner שהיא בפני עצמה
+#     # פונקציה עצמאית, אז אנחנו לא יכולים לגשת ל X_train שלה.
+#     # לכן, לצורך הדוגמה, נפעיל את הסקיילר על הנתונים הגולמיים, וזה לא הדרך המומלצת.
+#     # הדרך המומלצת היא לשמור את ה-scaler ביחד עם המודל.
+#
+#     # בגלל מגבלות הקוד שסופק, נצטרך להניח שה-sample_data כבר עבר סקאלינג או
+#     # לבצע סקאלינג בדרך אחרת (לדוגמה, אם יש לנו את נתוני האימון בנפרד).
+#     # אם אין לך גישה לסקיילר המקורי, לא ניתן לשחזר את הטרנספורמציה המדויקת.
+#     # הפתרון הטוב ביותר הוא להחזיר את ה-scaler מהפונקציה liner יחד עם המודל.
+#
+#     # נבצע סקאלינג לדוגמה עם סקיילר חדש. שימו לב: זה עשוי להוביל לאי דיוק
+#     # אם ה-scaler המקורי השתנה משמעותית.
+#     # דרך טובה יותר תהיה להעביר את ה-scaler המאומן כארגומנט נוסף לפונקציה הזו.
+#
+#     # נניח שהסקיילר אומן על 6 תכונות (מספר החיישנים)
+#     # לצורך הדוגמה, נדמה התאמה של סקיילר לנתונים כלשהם
+#     # ביישום אמיתי, תצטרך לשמור את ה-scaler שאומן בתוך liner
+#     # ולטעון אותו כאן, או להעבירו כארגומנט.
+#
+#     # יצירת DataFrame פיקטיבי להתאמת הסקיילר - רק אם אין גישה לסקיילר המקורי
+#     # זהו פתרון חלקי בלבד. הפתרון הנכון הוא לשמר את ה-scaler המקורי.
+#     dummy_data_for_scaler_fit = np.random.rand(10, sample_data.shape[1])
+#     scaler_for_prediction.fit(dummy_data_for_scaler_fit)
+#
+#     scaled_sample = scaler_for_prediction.transform(sample_data)
+#
+#     # ביצוע חיזוי
+#     prediction_probability = model.predict(scaled_sample)[0][0]
+#
+#     # קביעת תוצאת החיזוי (0 או 1)
+#     prediction = 1 if prediction_probability > 0.5 else 0
+#
+#     # חישוב אחוז הביטחון
+#     # אם החיזוי הוא 1, הביטחון הוא ההסתברות עצמה.
+#     # אם החיזוי הוא 0, הביטחון הוא 1 פחות ההסתברות.
+#     confidence = prediction_probability if prediction == 1 else (1 - prediction_probability)
+#     confidence_percent = confidence * 100
+#     print(prediction)
+#     print(confidence_percent)
+#
+#     return prediction, confidence_percent
+
+
+
+
+#מחזיר כל פעם את אותה תוצאה
+# def predict_single_row(filtered_row, feature_names, model):
+#     """
+#     מבצעת חיזוי על שורת נתונים שכבר עברה סינון (פילטר קלמן).
+#
+#     :param filtered_row: dict עם ערכי חיישנים מסוננים (key = sensor name, value = filtered value)
+#     :param feature_names: רשימת שמות החיישנים לפי סדר
+#     :param QR: פרמטרי Q ו-R (לא בשימוש כאן אבל נשאר למקרה שתרצה)
+#     :param model: המודל המאומן (למשל sklearn, keras וכו')
+#     :return: tuple (תוצאה בינארית, סיכוי החיזוי, הערכים המסוננים)
+#     """
+#     print("נתוני קלט מסוננים:", filtered_row)
+#
+#     # המרה ל-DataFrame לפי סדר העמודות (feature_names)
+#     row_df = pd.DataFrame([filtered_row])[feature_names]
+#
+#     if row_df.isnull().values.any():
+#         raise ValueError("שורת הקלט מכילה ערכים חסרים (NaN)")
+#
+#     # כאן כבר לא מבצעים סינון נוסף, כי הנתונים כבר מסוננים
+#     print(row_df)
+#     # תחזית המודל, מחזיר מערך דו-ממדי, לוקחים את הערך הראשון
+#     prediction = model.predict(row_df)[0][0]
+#
+#     # המרת הסיכוי לתוצאה בינארית לפי סף 0.5
+#     result = int(prediction > 0.5)
+#
+#     return result, prediction, filtered_row
+
+#קוד חדש עם scaler
+# ודא ש-numpy מיובא (import numpy as np)
+# וודא ש-StandardScaler לא מיובא בתוך הפונקציה הזו,
+# ואובייקט ה-scaler יגיע כארגומנט
+
+def predict_single_sample(model, sample_data, scaler):  # <--- הוספת scaler כארגומנט
+    """
+    מבצעת חיזוי על דגימה בודדת באמצעות מודל מאומן ו-scaler.
+
+    Args:
+        model: המודל המאומן (TensorFlow Keras).
+        sample_data: מערך חד-ממדי של נתונים (לאחר סינון קלמן).
+        scaler: אובייקט ה-StandardScaler המאומן.
+
+    Returns:
+        tuple: זוג ערכים הכולל:
+               - prediction (int): תוצאת החיזוי (0 או 1).
+               - confidence (float): אחוז הביטחון של החיזוי.
+    """
+    # ודא שהקלט הוא מערך numpy דו-ממדי עבור המודל (1 דגימה, N פיצ'רים)
+    sample_data = np.array(sample_data).reshape(1, -1)
+
+    # בצע סקאלינג לנתונים באמצעות ה-scaler שקיבלת
+    scaled_sample = scaler.transform(sample_data)  # <--- זה התיקון הקריטי
+
+    # ביצוע חיזוי
+    prediction_probability = model.predict(scaled_sample)[0][0]
+
+    # קביעת תוצאת החיזוי (0 או 1)
+    prediction = 1 if prediction_probability > 0.5 else 0
+
+    # חישוב אחוז הביטחון
+    confidence = prediction_probability if prediction == 1 else (1 - prediction_probability)
+    confidence_percent = confidence * 100
+
+    print(f"predict_single_sample - Prediction: {prediction}, Confidence: {confidence_percent:.2f}%")
+
+    return prediction, confidence_percent
 
 if __name__ == '__main__':
     feature_names, scaler, linear_model= linear(r'C:\Users\school.DESKTOP-7E8R3ME\Desktop\פרויקט חני\פרויקט\data_set\frut.xlsx')

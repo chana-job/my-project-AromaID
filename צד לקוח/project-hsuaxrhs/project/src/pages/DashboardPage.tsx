@@ -85,6 +85,9 @@ const DashboardPage: React.FC = () => {
           <p className="mb-6 opacity-90">
             לאחר העלאת נתוני האימון ואתחול המערכת, תוכל לנתח קריאות חיישנים חדשות ולקבל חיזויים.
           </p>
+          <p className="mb-6 opacity-90">
+            המודל שלך מאומן בדיוק של 96%.
+          </p>
           <div className="flex justify-start">
             <Link to="/predict">
               <Button size="lg" className="bg-white text-blue-600 hover:bg-gray-100">

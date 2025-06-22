@@ -3,18 +3,22 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 from datetime import datetime
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
+import pandas as pd
+import numpy as np
+import joblib
 
 import os
-#from data_sql import get_user_by_credentials, query_test, save_model_record, add_excel_file, save_model, \
- #   add_filtered_file
-from פרויקט.befor_filter_klaman import estimate_q_r_from_excel
-from פרויקט.data_excel import save_to_deta_set, save_to_data_set_filter, save_to_trained_models
-from פרויקט.data_sql import query_test, get_user_by_credentials, save_model, add_excel_file, add_filtered_file, \
+from befor_filter_klaman import estimate_q_r_from_excel
+from data_excel import save_to_deta_set, save_to_data_set_filter, save_to_trained_models, save_to_filter_models, \
+     save_scaler
+from data_sql import query_test, get_user_by_credentials, save_model_and_scaler, add_excel_file, add_filtered_file, \
     get_original_file_paths, get_last_excel_file_id_by_user, get_user_by_id, user_has_existing_file, \
-    load_model_by_user_id, load_model_path_by_user, load_trained_model, load_filter_params
-from פרויקט.filter_kalman import apply_filter_to_sensor_data
-from פרויקט.linear_regression import predict_single_row
-from פרויקט.linear_regression_from_usb import liner
+    load_model_by_user_id, load_model_and_scaler_path_by_user, load_trained_model, load_filter_params, save_kalman_paths_to_db, \
+    load_kalman_model_path, load_kalman_models
+from filter_kalman import apply_filter_to_sensor_data, apply_kalman_to_row
+from linear_regression import predict_single_row, predict_single_sample
+from linear_regression_from_usb import liner
+from Health_checks import validate_excel
 
 app = Flask(__name__)
 app.secret_key = 'g9X2$kP!3zT#v8Ld@7sQwE1cRbY0NmFu'
@@ -24,14 +28,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True    # מונע גישה ל-cookie דרך JS (המלצה)
 )
 CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5173"])
-#CORS(app, supports_credentials=True)
-#CORS(app)# מאפשר גישה מ-client React (CORS)
 
-
-#מחזיר את השורה/ות? של המשתמשים מהSQL
-@app.route('/try', methods=['GET'])
-def tryr():
-    return query_test()
 
 # נקודת כניסה בסיסית לשרת
 @app.route('/')
@@ -98,9 +95,11 @@ def save_to_file():
     # 💡 בדיקה אם למשתמש כבר יש קובץ
     if user_has_existing_file(user_id):
         return 'User already has an uploaded file', 409
-
-    # שמירת הקובץ בתקיה data_set
+    # שמירת הקובץ בתיקיה data_set
     filepath = save_to_deta_set(file)
+    # בדיקות תקינות על הקובץ אקסל
+    filea = request.files['file']
+    validate_excel(filea)
     try:
        # שמירת הנתונים בטבלתSQL
        file_orginal_id = add_excel_file(user_id, filepath)
@@ -124,7 +123,6 @@ def System_initialization(datasetId):
         filepath = get_original_file_paths(user_id)
         print('a')
         #מציאת  Q ו R לכל עמודה
-        #resaltQR = estimate_q_r_from_excel(filepath)
         resaltQR = estimate_q_r_from_excel(filepath[0])
         print('b')
         # אם זה רשימה עם פריט אחד:
@@ -132,26 +130,31 @@ def System_initialization(datasetId):
             filepath = filepath[0]
 
         #הפעלת פילטר קלמן על הנתונים
-        filtered_data = apply_filter_to_sensor_data(filepath, resaltQR)
+        filtered_data, kalman_models, sensors_columns = apply_filter_to_sensor_data(filepath, resaltQR)
         print('c')
-        #שמירת קובץ אקסל מסונן
+        #שמירת הקובץ המסונן בתיקיה
         data_set_filter_path = save_to_data_set_filter(filtered_data, filepath)
         print('d')
-        #שמירת ניתוב פילטר קלמן בSQL
-        #filter_params = {"Q": 0.05, "R": 0.1}
+        #מציאת האידי של הקובץ המקורי - כפי שהוא שמור בטבלאות
         file_orginal_id = get_last_excel_file_id_by_user(user_id)
         print(file_orginal_id)
-        filter_params = resaltQR
-        filtered_id = add_filtered_file(file_orginal_id, data_set_filter_path, filter_params)
-        print(filtered_id)
+        #שמירת הקובץ המסונן עם ערכי Q R בטבלת SQL
+        filtered_id = add_filtered_file(file_orginal_id, data_set_filter_path, resaltQR)
         print('e')
+        # שמירת מודל קלמן עבור המשתמש בתיקיה
+        model_file_path = save_to_filter_models(kalman_models, filepath)
+        print('f')
+        # שמירת הנתיב למודל קלמן
+        save_kalman_paths_to_db(user_id, filtered_id, kalman_models, model_file_path)
+        print('g')
         #הפעלת אימון מודל על הקובץ המסונן
         training_date = datetime.now()
-        print('f')
-        model = liner(data_set_filter_path)
-        print('g')
+
+        model, scaler = liner(data_set_filter_path)
+
         # שמירת המודל המאומן בתקיה
         model_path = save_to_trained_models(model, filepath)
+        scaler_path = save_scaler(scaler,filepath)
         print('h')
         #שמירת המודל המאומן בקובץ SQL
         user_id = session.get('user_id')
@@ -163,7 +166,7 @@ def System_initialization(datasetId):
         # metadata      - מילון עם מידע נוסף (אפשר גם {} אם אין מידע)
         if isinstance(filepath, list):
             filepath = filepath[0]
-        new_model_id = save_model(user_id, filtered_id, model_path, training_date, metadata)
+        new_model_id = save_model_and_scaler(user_id, filtered_id, model_path, training_date, metadata, scaler_path)
         print('good')
         return jsonify({"status": "success", "message": "Model trained successfully"})
     except Exception as e:
@@ -177,73 +180,66 @@ def predict():
 
     try:
         user_id = session.get('user_id')
+        # אם אין למשתמש קובץ מודל מאומן – מחזיר שגיאה 405 ("לא קיים מודל מאומן").
         if not user_has_existing_file(user_id):
             return 'There is no trained model file for this user.', 405
 
         data = request.get_json()
         print(data)
+        # בודק אם לא התקבלו ערכים או שחסרים ערכי חיישנים – מחזיר שגיאה 400.
         if not data or 'sensorValues' not in data:
             return jsonify({'error': 'Missing sensor values'}), 400
         print('1')
+        # שולף את רשימת הערכים של החיישנים מה־JSON
         sensor_values = data['sensorValues']
         print(sensor_values)
         sensors = ['TGS2600', 'TGS2602', 'TGS2611', 'TGS2610',  # רשימת חיישנים
                    'TGS2620', 'TGS826']
         print('2')
         #שליפת הניתוב למודל המאומן של המשתמש
-        filtered_id,model_path = load_model_path_by_user(user_id)
+        model_path, filtered_id, scaler_path = load_model_and_scaler_path_by_user(user_id)
+        if not model_path or not scaler_path:
+            return jsonify({'error': 'Model or scaler paths not found for user.'}), 404
+        print('3. Model and scaler paths retrieved.')
         print('3')
         #טעינת המודל המאומן של המשתמש
+        print(model_path)
         model = load_trained_model(model_path)
+        model.summary()
         print('4')
+        # טעינת ה-scaler המאומן
+        scaler = joblib.load(scaler_path)
+        print('5. Scaler loaded.')
+
         #טוען את פרמטרי הסינון
-        RQ = load_filter_params(filtered_id)
+        #RQ = load_filter_params(filtered_id)
         print('5')
+        # טוען את הנתיב למודל קלמן
+        kalman_model_path = load_kalman_model_path(user_id, filtered_id)
+        #טוען את קלמן מודל
+        kalman_model = load_kalman_models(kalman_model_path)
+        # סינון קלמן על הנתונים
+        row_scaled = apply_kalman_to_row(sensor_values, kalman_model, sensors)
+        print('5.5')
+        values_array = np.array(list(row_scaled.values()))
         # קריאה לפונקציית החיזוי
-        result, probability,row_scaled = predict_single_row(sensor_values, sensors, RQ, model)
+        #result, probability, row_scaled = predict_single_row(sensor_values, kalman_model, sensors, model)
+        result_prediction, confidence_score = predict_single_sample(model,sensor_values, scaler)
+        print(f"Prediction Result: {result_prediction}")
+        print(f"Confidence Score: {confidence_score}")
+        print(row_scaled)
         print('6')
         return jsonify(
             {
-                "originalValues":sensor_values ,
-                "filteredValues":  list(row_scaled.values()),
-                "prediction":" result",
-                "confidence":float(probability),
+                "originalValues": sensor_values,#רשימת ערכים לא מסוננים
+                "filteredValues":  list(row_scaled.values()),#רשימת ערכים מסוננים
+                "prediction": int(result_prediction),#תוצאה
+                "confidence": float(confidence_score/100),#רמת ביטחון
                 "smellName": "תות "
             })
     except Exception as e:
         print(f"שגיאה בפונקציית /predict: {e}")
         return jsonify({'error': 'Server error'}), 500
-
-
-
-
-
-# כשר לוחצים על איתחול המערכת, מסנן את הנתונים, שומר את הנתונים המסוננים
-# ואת הערכים לסינון של פילטר קלמן, מאמן מודל של למידת מכונה ושומר אותו
-#להחליף את train לשם של הפונקציה הזו
-#@app.route('system_initialization', methods=['POST'])
-#def system_initialization():
-
-# # 🔍 API לחיזוי - מקבל נתונים ותחזיר תגית לפי המודל המאומן
-# @app.route('/predict', methods=['POST'])
-# def predict():
-#     # בדיקה אם המודל כבר מאומן
-#     if not os.path.exists(MODEL_PATH):
-#         return jsonify({'error': 'Model not trained yet'}), 400
-#     # טעינת המודל מהקובץ
-#     model = joblib.load(MODEL_PATH)
-#
-#     try:
-#         # קבלת נתונים ב-JSON מהבקשה
-#         data = request.get_json()
-#         input_df = pd.DataFrame([data]) # יצירת DataFrame מתאים
-#
-#         # ביצוע חיזוי
-#         prediction = model.predict(input_df)[0]
-#
-#         return jsonify({'label': prediction})
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 500
 
 
 
